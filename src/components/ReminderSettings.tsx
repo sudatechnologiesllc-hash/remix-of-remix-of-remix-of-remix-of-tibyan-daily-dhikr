@@ -116,6 +116,10 @@ export function ReminderSettings() {
             />
           </button>
         </div>
+        {status && (
+          <p className="mt-3 text-[11px] leading-relaxed text-tibyan-gold">{status}</p>
+        )}
+
       </section>
 
       <section className="mb-4 rounded-2xl border border-tibyan-border-light bg-tibyan-surface-light p-5 shadow-tactile dark:border-tibyan-border-dark dark:bg-tibyan-surface-dark dark:shadow-tactile-dark">
