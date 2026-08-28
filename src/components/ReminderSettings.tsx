@@ -43,6 +43,18 @@ export function ReminderSettings() {
     window.localStorage.setItem("tibyan_reminders_sound", sound);
   }, [enabled, minutes, sound]);
 
+  // بعد العودة من إعدادات النظام: إن مُنح التصريح تُستأنف الجدولة تلقائياً
+  useEffect(() => {
+    if (!needsPermission) return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void apply(true, minutes, sound as SoundId);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsPermission, minutes, sound]);
+
   const apply = async (
     nextEnabled: boolean,
     nextMinutes: IntervalMinutes,
