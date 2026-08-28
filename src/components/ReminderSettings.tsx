@@ -1,7 +1,13 @@
-import { BellRing, BellOff, Volume2 } from "lucide-react";
+import { BellRing, BellOff, Volume2, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppFooter } from "@/components/AppFooter";
-import { INTERVALS, cancelAll, schedule, type IntervalMinutes } from "@/services/notifications";
+import {
+  INTERVALS,
+  cancelAll,
+  openNotificationSettings,
+  schedule,
+  type IntervalMinutes,
+} from "@/services/notifications";
 import { impact } from "@/services/haptics";
 import { playReminderSound, unlockAudio, type SoundId } from "@/services/sound";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -17,6 +23,7 @@ export function ReminderSettings() {
   const [minutes, setMinutes] = useState<IntervalMinutes>(30);
   const [sound, setSound] = useState("salawat");
   const [status, setStatus] = useState<string | null>(null);
+  const [needsPermission, setNeedsPermission] = useState(false);
 
 
   useEffect(() => {
@@ -36,6 +43,18 @@ export function ReminderSettings() {
     window.localStorage.setItem("tibyan_reminders_sound", sound);
   }, [enabled, minutes, sound]);
 
+  // بعد العودة من إعدادات النظام: إن مُنح التصريح تُستأنف الجدولة تلقائياً
+  useEffect(() => {
+    if (!needsPermission) return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      void apply(true, minutes, sound as SoundId);
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsPermission, minutes, sound]);
+
   const apply = async (
     nextEnabled: boolean,
     nextMinutes: IntervalMinutes,
@@ -46,6 +65,7 @@ export function ReminderSettings() {
     if (!nextEnabled) {
       await cancelAll();
       setStatus(null);
+      setNeedsPermission(false);
       return;
     }
     const result = await schedule({
@@ -56,9 +76,11 @@ export function ReminderSettings() {
     if (!result.success) {
       setEnabled(false);
       setStatus(result.reason ?? "تعذّر تشغيل التذكير");
+      setNeedsPermission(Boolean(result.permissionDenied));
       return;
     }
     setStatus(result.reason ?? null);
+    setNeedsPermission(false);
   };
 
 
@@ -116,8 +138,22 @@ export function ReminderSettings() {
             />
           </button>
         </div>
-        {status && (
-          <p className="mt-3 text-[11px] leading-relaxed text-tibyan-gold">{status}</p>
+        {status && <p className="mt-3 text-[11px] leading-relaxed text-tibyan-gold">{status}</p>}
+        {needsPermission && (
+          <button
+            type="button"
+            onClick={async () => {
+              void impact("light");
+              const opened = await openNotificationSettings();
+              if (!opened) {
+                setStatus("افتح إعدادات الهاتف ← التطبيقات ← تِبْيَان ← الإشعارات وفعّلها.");
+              }
+            }}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-tibyan-green-600 px-4 py-2.5 text-xs font-semibold text-tibyan-green-600 transition-transform active:scale-95 dark:border-tibyan-green-emerald dark:text-tibyan-green-emerald"
+          >
+            <Settings className="h-3.5 w-3.5" />
+            فتح إعدادات الإشعارات
+          </button>
         )}
 
       </section>

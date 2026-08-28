@@ -85,7 +85,45 @@ export interface ScheduleResult {
   reason?: string;
   /** موعد أول تنبيه إن نجحت الجدولة */
   firstAt?: Date;
+  /** صحيح إذا كان الفشل بسبب رفض تصريح الإشعارات (لعرض زر فتح الإعدادات) */
+  permissionDenied?: boolean;
 }
+
+/**
+ * يفتح صفحة إعدادات إشعارات تِبْيَان في نظام أندرويد مباشرة،
+ * وفي المتصفح يفتح إعدادات الموقع إن أمكن.
+ */
+export async function openNotificationSettings(): Promise<boolean> {
+  if (!isBrowser()) return false;
+  if (isNative()) {
+    try {
+      const { NativeSettings, AndroidSettings, IOSSettings } = await import(
+        "capacitor-native-settings"
+      );
+      await NativeSettings.open({
+        optionAndroid: AndroidSettings.AppNotification,
+        optionIOS: IOSSettings.App,
+      });
+      return true;
+    } catch (error) {
+      log("failed to open app notification settings", error);
+      try {
+        const { NativeSettings, AndroidSettings, IOSSettings } = await import(
+          "capacitor-native-settings"
+        );
+        await NativeSettings.open({
+          optionAndroid: AndroidSettings.ApplicationDetails,
+          optionIOS: IOSSettings.App,
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
 
 const STORE_KEY = "tibyan_reminders_state";
 
@@ -170,7 +208,11 @@ async function scheduleNative(
   }
   log("Permission:", permission.display);
   if (permission.display !== "granted") {
-    return { success: false, reason: "لم يُمنح تصريح الإشعارات. فعّله من إعدادات الهاتف." };
+    return {
+      success: false,
+      permissionDenied: true,
+      reason: "لم يُمنح تصريح الإشعارات. افتح إعدادات الإشعارات وفعّلها لتِبْيَان.",
+    };
   }
 
   await ensureChannel(native, options.soundId);
