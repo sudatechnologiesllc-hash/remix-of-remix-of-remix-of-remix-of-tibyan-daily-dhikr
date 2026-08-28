@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { registerServiceWorker } from "../lib/register-sw";
+import { initBackgroundReminders } from "@/services/notifications";
 import { ThemeProvider } from "@/components/ThemeProvider";
 
 function NotFoundComponent() {
@@ -131,6 +132,9 @@ function RootComponent() {
   useEffect(() => {
     registerServiceWorker();
   }, []);
+
+  // فحص/إعادة ملء جدولة تنبيهات الذكر عند إقلاع التطبيق وعند عودته من الخلفية
+  useEffect(() => initBackgroundReminders(), []);
 
   return (
     <QueryClientProvider client={queryClient}>
