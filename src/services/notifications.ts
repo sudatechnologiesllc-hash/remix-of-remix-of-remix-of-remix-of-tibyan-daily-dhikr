@@ -1,14 +1,33 @@
 import { playReminderSound, unlockAudio, type SoundId } from "./sound";
 
-// طبقة التنبيهات: Capacitor Local Notifications على الجهاز (تعمل والتطبيق مغلق/في الخلفية)،
-// وWeb Notifications في المتصفح (تعمل فقط أثناء فتح الصفحة).
+// طبقة التنبيهات:
+// - أندرويد (Capacitor): الجدولة تُسلَّم لنظام أندرويد عبر @capacitor/local-notifications،
+//   فتعمل التنبيهات والصوت والتطبيق مغلق أو الشاشة مقفلة، دون أي مؤقّت JavaScript.
+// - المتصفح: مؤقّت setInterval يعمل أثناء فتح الصفحة فقط (بديل احتياطي للويب).
 export const INTERVALS = [5, 15, 30, 60, 120] as const;
 export type IntervalMinutes = (typeof INTERVALS)[number];
 
-const CHANNEL_ID = "tibyan_salawat";
-/** عدد التنبيهات المجدولة مسبقاً (يُعاد ملؤها كلما فُتح التطبيق) */
-const BATCH_SIZE = 48;
-const ID_BASE = 1000;
+/** قنوات أندرويد: قناة مستقلة لكل صوت (لأن الصوت خاصية للقناة ولا يمكن تغييره بعد إنشائها). */
+const CHANNELS: Record<SoundId, { id: string; sound: string; name: string }> = {
+  salawat: {
+    id: "tibyan_salawat_v2",
+    sound: "salawat.mp3",
+    name: "تذكير الصلاة على النبي ﷺ (بالصوت)",
+  },
+  chime: { id: "tibyan_chime_v2", sound: "chime.mp3", name: "تذكير الصلاة على النبي ﷺ (نغمة)" },
+  silent: { id: "tibyan_silent_v2", sound: "silence.mp3", name: "تذكير الصلاة على النبي ﷺ (صامت)" },
+};
+
+/** نطاق معرّفات خاص بتِبْيَان لا يتصادم مع غيره */
+const ID_BASE = 71000;
+const BATCH_SIZE = 60;
+/** إذا نقص عدد التنبيهات المستقبلية عن هذا الحد يُعاد ملء الدفعة */
+const REFILL_THRESHOLD = 12;
+
+const DEBUG = true;
+const log = (...args: unknown[]) => {
+  if (DEBUG) console.log("[Tibyan Notifications]", ...args);
+};
 
 const isBrowser = () => typeof window !== "undefined";
 
@@ -18,14 +37,15 @@ export function isNative(): boolean {
   return Boolean(cap?.isNativePlatform?.());
 }
 
-type NativeApi = typeof import("@capacitor/local-notifications")["LocalNotifications"];
+type NativeApi = (typeof import("@capacitor/local-notifications"))["LocalNotifications"];
 
 async function loadNative(): Promise<NativeApi | null> {
   if (!isNative()) return null;
   try {
     const mod = await import("@capacitor/local-notifications");
     return mod.LocalNotifications;
-  } catch {
+  } catch (error) {
+    log("failed to load native plugin", error);
     return null;
   }
 }
@@ -35,9 +55,13 @@ export async function requestPermission(): Promise<boolean> {
   const native = await loadNative();
   if (native) {
     try {
+      const current = await native.checkPermissions();
+      if (current.display === "granted") return true;
       const res = await native.requestPermissions();
+      log("Permission:", res.display);
       return res.display === "granted";
-    } catch {
+    } catch (error) {
+      log("permission request failed", error);
       return false;
     }
   }
@@ -51,10 +75,16 @@ let webTimer: ReturnType<typeof setInterval> | undefined;
 export interface ScheduleOptions {
   minutes: IntervalMinutes;
   body: string;
-  /** اسم ملف الصوت الأصلي على أندرويد (بدون امتداد يُستخدم للقناة) */
-  sound?: string | undefined;
-  /** معرّف الصوت للتشغيل في المتصفح: salawat | chime | silent */
-  soundId?: SoundId;
+  /** معرّف الصوت: salawat | chime | silent */
+  soundId: SoundId;
+}
+
+export interface ScheduleResult {
+  success: boolean;
+  /** سبب الفشل أو ملاحظة (يُعرض للمستخدم عند الحاجة) */
+  reason?: string;
+  /** موعد أول تنبيه إن نجحت الجدولة */
+  firstAt?: Date;
 }
 
 const STORE_KEY = "tibyan_reminders_state";
@@ -71,106 +101,175 @@ function saveState(options: ScheduleOptions | null) {
 function readState(): ScheduleOptions | null {
   try {
     const raw = window.localStorage.getItem(STORE_KEY);
-    return raw ? (JSON.parse(raw) as ScheduleOptions) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ScheduleOptions> & { sound?: string };
+    if (!parsed.minutes || !INTERVALS.includes(parsed.minutes as IntervalMinutes)) return null;
+    const soundId: SoundId =
+      parsed.soundId && parsed.soundId in CHANNELS ? parsed.soundId : "salawat";
+    return {
+      minutes: parsed.minutes as IntervalMinutes,
+      body: parsed.body ?? "اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ",
+      soundId,
+    };
   } catch {
     return null;
   }
 }
 
-async function ensureChannel(native: NativeApi, sound?: string) {
+/** إنشاء قناة الصوت المطلوبة فقط (القنوات في أندرويد ثابتة بعد إنشائها) */
+async function ensureChannel(native: NativeApi, soundId: SoundId) {
+  const channel = CHANNELS[soundId];
   try {
     await native.createChannel({
-      id: CHANNEL_ID,
-      name: "تذكير الصلاة على النبي ﷺ",
+      id: channel.id,
+      name: channel.name,
       description: "تنبيهات دورية للصلاة على النبي ﷺ",
       importance: 5,
       visibility: 1,
-      ...(sound ? { sound } : {}),
+      sound: channel.sound,
       vibration: true,
     });
-  } catch {
-    // بعض المنصات لا تدعم القنوات (iOS)
+    log("Channel created:", channel.id, "sound:", channel.sound);
+  } catch (error) {
+    log("createChannel failed (may be unsupported platform)", error);
   }
 }
 
-/** جدولة دفعة تنبيهات مستقبلية على الجهاز — تستمر بعد إغلاق التطبيق */
-async function scheduleNative(native: NativeApi, options: ScheduleOptions): Promise<boolean> {
-  const permission = await native.requestPermissions();
-  if (permission.display !== "granted") return false;
+/** إلغاء كل تنبيهات تِبْيَان المجدولة على الجهاز */
+async function cancelNative(native: NativeApi) {
+  try {
+    const pending = await native.getPending();
+    const ours = pending.notifications.filter((n) => n.id >= ID_BASE && n.id < ID_BASE + 100000);
+    if (ours.length) {
+      await native.cancel({ notifications: ours.map((n) => ({ id: n.id })) });
+      log("Cancelled", ours.length, "pending notifications");
+    }
+  } catch (error) {
+    log("cancel failed", error);
+  }
+}
 
-  await ensureChannel(native, options.sound?.replace(/\.[^.]+$/, ""));
+async function futurePendingCount(native: NativeApi): Promise<number> {
+  try {
+    const pending = await native.getPending();
+    return pending.notifications.filter((n) => n.id >= ID_BASE).length;
+  } catch {
+    return 0;
+  }
+}
+
+/** جدولة دفعة تنبيهات مستقبلية على نظام أندرويد — تعمل بعد إغلاق التطبيق */
+async function scheduleNative(
+  native: NativeApi,
+  options: ScheduleOptions,
+): Promise<ScheduleResult> {
+  log("Native detected");
+  let permission = await native.checkPermissions();
+  if (permission.display !== "granted") {
+    permission = await native.requestPermissions();
+  }
+  log("Permission:", permission.display);
+  if (permission.display !== "granted") {
+    return { success: false, reason: "لم يُمنح تصريح الإشعارات. فعّله من إعدادات الهاتف." };
+  }
+
+  await ensureChannel(native, options.soundId);
   await cancelNative(native);
 
+  const channel = CHANNELS[options.soundId];
   const stepMs = options.minutes * 60 * 1000;
   const start = Date.now() + stepMs;
   const notifications = Array.from({ length: BATCH_SIZE }, (_, index) => ({
     id: ID_BASE + index,
     title: "تِبْيَان",
     body: options.body,
-    channelId: CHANNEL_ID,
-    ...(options.sound ? { sound: options.sound } : {}),
+    channelId: channel.id,
+    sound: channel.sound,
     smallIcon: "ic_stat_icon",
+    ongoing: false,
+    autoCancel: true,
     schedule: {
       at: new Date(start + index * stepMs),
       allowWhileIdle: true,
     },
   }));
 
-  await native.schedule({ notifications });
-  return true;
-}
-
-async function cancelNative(native: NativeApi) {
+  log("Scheduling", notifications.length, "notifications every", options.minutes, "min");
   try {
-    const pending = await native.getPending();
-    if (pending.notifications.length) {
-      await native.cancel({ notifications: pending.notifications.map((n) => ({ id: n.id })) });
-    }
-  } catch {
-    // تجاهل
+    await native.schedule({ notifications });
+  } catch (error) {
+    log("schedule failed", error);
+    const message = error instanceof Error ? error.message : String(error);
+    return { success: false, reason: `تعذّرت الجدولة: ${message}` };
   }
+
+  const firstAt = new Date(start);
+  log("First notification at", firstAt.toISOString());
+  log("Pending notifications:", await futurePendingCount(native));
+  return { success: true, firstAt };
 }
 
-export async function schedule(options: ScheduleOptions): Promise<void> {
-  if (!isBrowser()) return;
-  await cancelAll({ keepState: true });
+export async function schedule(options: ScheduleOptions): Promise<ScheduleResult> {
+  if (!isBrowser()) return { success: false, reason: "غير متاح" };
+  await stopWebTimer();
   saveState(options);
 
   const native = await loadNative();
   if (native) {
-    const ok = await scheduleNative(native, options);
-    if (ok) return;
+    const result = await scheduleNative(native, options);
+    if (!result.success) saveState(null);
+    return result;
   }
 
-  // المتصفح: مؤقّت يعمل أثناء فتح الصفحة فقط
+  // المتصفح فقط: مؤقّت يعمل أثناء فتح الصفحة (لا يُستخدم على أندرويد)
   await unlockAudio();
-  const soundId: SoundId = options.soundId ?? "salawat";
   const granted = await requestPermission();
-  webTimer = setInterval(() => {
-    void playReminderSound(soundId);
-    if (granted) {
-      try {
-        new Notification("تِبْيَان", { body: options.body });
-      } catch {
-        // تم إغلاق الصلاحية
+  webTimer = setInterval(
+    () => {
+      void playReminderSound(options.soundId);
+      if (granted) {
+        try {
+          new Notification("تِبْيَان", { body: options.body });
+        } catch {
+          // تم سحب الصلاحية
+        }
       }
-    }
-  }, options.minutes * 60 * 1000);
+    },
+    options.minutes * 60 * 1000,
+  );
+  return {
+    success: true,
+    firstAt: new Date(Date.now() + options.minutes * 60 * 1000),
+    ...(granted ? {} : { reason: "التذكير يعمل أثناء فتح الصفحة فقط في المتصفح" }),
+  };
 }
 
-export async function cancelAll(opts?: { keepState?: boolean }): Promise<void> {
+async function stopWebTimer() {
   if (webTimer) {
     clearInterval(webTimer);
     webTimer = undefined;
   }
+}
+
+export async function cancelAll(opts?: { keepState?: boolean }): Promise<void> {
+  await stopWebTimer();
   if (!opts?.keepState) saveState(null);
   const native = await loadNative();
   if (native) await cancelNative(native);
+  log("Reminders cancelled");
+}
+
+/** عدد التنبيهات المستقبلية المجدولة فعلاً (للتشخيص/العرض) */
+export async function pendingCount(): Promise<number> {
+  const native = await loadNative();
+  if (!native) return webTimer ? 1 : 0;
+  return futurePendingCount(native);
 }
 
 /**
- * إعادة تعبئة دفعة التنبيهات عند فتح/استئناف التطبيق، حتى لا تنفد الجدولة المسبقة.
- * تُستدعى مرة واحدة عند إقلاع التطبيق.
+ * فحص الجدولة وإعادة ملئها عند إقلاع التطبيق وعند عودته من الخلفية،
+ * وبعد إعادة تشغيل الجهاز (يعيد المكوّن الأصلي التنبيهات، وهذا يكمل ما نقص).
+ * تُستدعى مرة واحدة من جذر التطبيق.
  */
 export function initBackgroundReminders(): () => void {
   if (!isBrowser()) return () => {};
@@ -181,12 +280,18 @@ export function initBackgroundReminders(): () => void {
     const native = await loadNative();
     if (!native) return;
     try {
-      const pending = await native.getPending();
-      const future = pending.notifications.filter((n) => n.id >= ID_BASE);
-      if (future.length >= BATCH_SIZE / 2) return;
+      const permission = await native.checkPermissions();
+      if (permission.display !== "granted") {
+        log("rearm skipped — permission:", permission.display);
+        return;
+      }
+      const remaining = await futurePendingCount(native);
+      log("Pending notifications:", remaining);
+      if (remaining >= REFILL_THRESHOLD) return;
+      log("Refilling batch…");
       await scheduleNative(native, state);
-    } catch {
-      // تجاهل
+    } catch (error) {
+      log("rearm failed", error);
     }
   };
 
@@ -200,9 +305,15 @@ export function initBackgroundReminders(): () => void {
       const handle = await App.addListener("appStateChange", ({ isActive }) => {
         if (isActive) void rearm();
       });
-      cleanup = () => void handle.remove();
-    } catch {
-      // تجاهل
+      const resume = await App.addListener("resume", () => {
+        void rearm();
+      });
+      cleanup = () => {
+        void handle.remove();
+        void resume.remove();
+      };
+    } catch (error) {
+      log("app listener failed", error);
     }
   })();
 
