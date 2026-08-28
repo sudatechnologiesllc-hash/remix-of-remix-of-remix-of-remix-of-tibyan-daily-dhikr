@@ -301,12 +301,73 @@ export async function cancelAll(opts?: { keepState?: boolean }): Promise<void> {
   log("Reminders cancelled");
 }
 
+/** إشعار اختبار فوري للتأكد من عمل الصوت والقناة */
+export async function sendTestNotification(
+  soundId: SoundId,
+  body = "هذا إشعار اختبار من تِبْيَان — تأكد من سماع الصوت.",
+): Promise<ScheduleResult> {
+  if (!isBrowser()) return { success: false, reason: "غير متاح" };
+  const native = await loadNative();
+  if (native) {
+    let permission = await native.checkPermissions();
+    if (permission.display !== "granted") permission = await native.requestPermissions();
+    if (permission.display !== "granted") {
+      return {
+        success: false,
+        permissionDenied: true,
+        reason: "لم يُمنح تصريح الإشعارات. افتح إعدادات الإشعارات وفعّلها لتِبْيَان.",
+      };
+    }
+    await ensureChannel(native, soundId);
+    const channel = CHANNELS[soundId];
+    const at = new Date(Date.now() + 3000);
+    try {
+      await native.schedule({
+        notifications: [
+          {
+            id: ID_BASE + 99999,
+            title: "تِبْيَان — إشعار اختبار",
+            body,
+            channelId: channel.id,
+            sound: channel.sound,
+            smallIcon: "ic_stat_icon",
+            autoCancel: true,
+            schedule: { at, allowWhileIdle: true },
+          },
+        ],
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, reason: `تعذّر إرسال إشعار الاختبار: ${message}` };
+    }
+    return { success: true, firstAt: at };
+  }
+
+  // المتصفح
+  await unlockAudio();
+  const granted = await requestPermission();
+  void playReminderSound(soundId);
+  if (granted) {
+    try {
+      new Notification("تِبْيَان — إشعار اختبار", { body });
+    } catch {
+      // متجاهل
+    }
+  }
+  return {
+    success: true,
+    firstAt: new Date(),
+    ...(granted ? {} : { reason: "تم تشغيل الصوت فقط (تصريح الإشعارات غير ممنوح)" }),
+  };
+}
+
 /** عدد التنبيهات المستقبلية المجدولة فعلاً (للتشخيص/العرض) */
 export async function pendingCount(): Promise<number> {
   const native = await loadNative();
   if (!native) return webTimer ? 1 : 0;
   return futurePendingCount(native);
 }
+
 
 /**
  * فحص الجدولة وإعادة ملئها عند إقلاع التطبيق وعند عودته من الخلفية،
