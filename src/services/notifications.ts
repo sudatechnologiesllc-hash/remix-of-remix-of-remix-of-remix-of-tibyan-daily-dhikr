@@ -208,7 +208,11 @@ async function scheduleNative(
   }
   log("Permission:", permission.display);
   if (permission.display !== "granted") {
-    return { success: false, reason: "لم يُمنح تصريح الإشعارات. فعّله من إعدادات الهاتف." };
+    return {
+      success: false,
+      permissionDenied: true,
+      reason: "لم يُمنح تصريح الإشعارات. افتح إعدادات الإشعارات وفعّلها لتِبْيَان.",
+    };
   }
 
   await ensureChannel(native, options.soundId);
