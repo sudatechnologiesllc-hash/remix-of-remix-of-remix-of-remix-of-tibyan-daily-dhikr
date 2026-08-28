@@ -4,7 +4,6 @@ import { AppFooter } from "@/components/AppFooter";
 import {
   INTERVALS,
   cancelAll,
-  openExactAlarmSettings,
   openNotificationSettings,
   schedule,
   sendTestNotification,
@@ -27,7 +26,6 @@ export function ReminderSettings() {
   const [sound, setSound] = useState("salawat");
   const [status, setStatus] = useState<string | null>(null);
   const [needsPermission, setNeedsPermission] = useState(false);
-  const [needsExactAlarm, setNeedsExactAlarm] = useState(false);
 
 
   useEffect(() => {
@@ -49,7 +47,7 @@ export function ReminderSettings() {
 
   // بعد العودة من إعدادات النظام: إن مُنح التصريح تُستأنف الجدولة تلقائياً
   useEffect(() => {
-    if (!needsPermission && !needsExactAlarm) return;
+    if (!needsPermission) return;
     const onVisible = () => {
       if (document.visibilityState !== "visible") return;
       void apply(true, minutes, sound as SoundId);
@@ -57,7 +55,7 @@ export function ReminderSettings() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsPermission, needsExactAlarm, minutes, sound]);
+  }, [needsPermission, minutes, sound]);
 
   const apply = async (
     nextEnabled: boolean,
@@ -70,7 +68,6 @@ export function ReminderSettings() {
       await cancelAll();
       setStatus(null);
       setNeedsPermission(false);
-      setNeedsExactAlarm(false);
       return;
     }
     const result = await schedule({
@@ -82,12 +79,10 @@ export function ReminderSettings() {
       setEnabled(false);
       setStatus(result.reason ?? "تعذّر تشغيل التذكير");
       setNeedsPermission(Boolean(result.permissionDenied));
-      setNeedsExactAlarm(Boolean(result.exactAlarmDenied));
       return;
     }
     setStatus(result.reason ?? null);
     setNeedsPermission(false);
-    setNeedsExactAlarm(false);
   };
 
 
@@ -162,22 +157,6 @@ export function ReminderSettings() {
             فتح إعدادات الإشعارات
           </button>
         )}
-        {needsExactAlarm && (
-          <button
-            type="button"
-            onClick={async () => {
-              void impact("light");
-              const opened = await openExactAlarmSettings();
-              if (!opened) {
-                setStatus("افتح إعدادات الهاتف ← التطبيقات ← وصول خاص ← المنبّهات والتذكيرات، ثم اسمح لتِبْيَان.");
-              }
-            }}
-            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-tibyan-green-600 px-4 py-2.5 text-xs font-semibold text-tibyan-green-600 transition-transform active:scale-95 dark:border-tibyan-green-emerald dark:text-tibyan-green-emerald"
-          >
-            <Settings className="h-3.5 w-3.5" />
-            السماح بالمنبّهات الدقيقة
-          </button>
-        )}
 
         <button
           type="button"
@@ -189,11 +168,9 @@ export function ReminderSettings() {
             if (!result.success) {
               setStatus(result.reason ?? "تعذّر إرسال إشعار الاختبار");
               setNeedsPermission(Boolean(result.permissionDenied));
-              setNeedsExactAlarm(false);
               return;
             }
             setNeedsPermission(false);
-            setNeedsExactAlarm(false);
             setStatus(result.reason ?? "تم إرسال إشعار الاختبار — سيظهر بعد ثوانٍ مع الصوت.");
           }}
           className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-tibyan-gold/60 px-4 py-2.5 text-xs font-semibold text-tibyan-gold transition-transform active:scale-95"
