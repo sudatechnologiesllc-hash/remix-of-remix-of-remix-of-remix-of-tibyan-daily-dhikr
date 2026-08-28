@@ -31,6 +31,24 @@ const log = (...args: unknown[]) => {
 
 const isBrowser = () => typeof window !== "undefined";
 
+/** يمنع تعليق الواجهة إن لم يُرجع المكوّن الأصلي أي نتيجة */
+function withTimeout<T>(promise: Promise<T>, label: string, ms = 8000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`انتهت مهلة ${label}`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+
 export function isNative(): boolean {
   if (!isBrowser()) return false;
   const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
