@@ -16,6 +16,8 @@ export function ReminderSettings() {
   const [enabled, setEnabled] = useState(false);
   const [minutes, setMinutes] = useState<IntervalMinutes>(30);
   const [sound, setSound] = useState("salawat");
+  const [status, setStatus] = useState<string | null>(null);
+
 
   useEffect(() => {
     const savedEnabled = window.localStorage.getItem("tibyan_reminders_enabled") === "1";
