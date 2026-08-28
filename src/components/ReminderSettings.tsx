@@ -16,6 +16,8 @@ export function ReminderSettings() {
   const [enabled, setEnabled] = useState(false);
   const [minutes, setMinutes] = useState<IntervalMinutes>(30);
   const [sound, setSound] = useState("salawat");
+  const [status, setStatus] = useState<string | null>(null);
+
 
   useEffect(() => {
     const savedEnabled = window.localStorage.getItem("tibyan_reminders_enabled") === "1";
@@ -34,20 +36,31 @@ export function ReminderSettings() {
     window.localStorage.setItem("tibyan_reminders_sound", sound);
   }, [enabled, minutes, sound]);
 
-  const apply = async (nextEnabled: boolean, nextMinutes: IntervalMinutes) => {
+  const apply = async (
+    nextEnabled: boolean,
+    nextMinutes: IntervalMinutes,
+    nextSound: SoundId = sound as SoundId,
+  ) => {
     void impact("light");
     await unlockAudio();
-    if (nextEnabled) {
-      await schedule({
-        minutes: nextMinutes,
-        body: "اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ",
-        sound: sound === "silent" ? undefined : `${sound}.mp3`,
-        soundId: sound as SoundId,
-      });
-    } else {
+    if (!nextEnabled) {
       await cancelAll();
+      setStatus(null);
+      return;
     }
+    const result = await schedule({
+      minutes: nextMinutes,
+      body: "اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ",
+      soundId: nextSound,
+    });
+    if (!result.success) {
+      setEnabled(false);
+      setStatus(result.reason ?? "تعذّر تشغيل التذكير");
+      return;
+    }
+    setStatus(result.reason ?? null);
   };
+
 
   return (
     <div className="app-screen px-safe pb-app mx-auto max-w-lg pt-12">
@@ -103,6 +116,10 @@ export function ReminderSettings() {
             />
           </button>
         </div>
+        {status && (
+          <p className="mt-3 text-[11px] leading-relaxed text-tibyan-gold">{status}</p>
+        )}
+
       </section>
 
       <section className="mb-4 rounded-2xl border border-tibyan-border-light bg-tibyan-surface-light p-5 shadow-tactile dark:border-tibyan-border-dark dark:bg-tibyan-surface-dark dark:shadow-tactile-dark">
@@ -145,7 +162,7 @@ export function ReminderSettings() {
                 setSound(item.id);
                 void impact("light");
                 void playReminderSound(item.id as SoundId);
-                if (enabled) void apply(true, minutes);
+                if (enabled) void apply(true, minutes, item.id as SoundId);
               }}
               className={`flex items-center justify-between rounded-xl border px-4 py-3 text-xs transition-transform active:scale-[0.98] ${
                 sound === item.id

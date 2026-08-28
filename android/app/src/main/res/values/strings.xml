@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">تِبْيَان</string>
+    <string name="title_activity_main">تِبْيَان</string>
+    <string name="package_name">app.lovable.tibyan</string>
+    <string name="custom_url_scheme">app.lovable.tibyan</string>
+</resources>
