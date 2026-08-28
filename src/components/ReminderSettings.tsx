@@ -158,7 +158,7 @@ export function ReminderSettings() {
                 setSound(item.id);
                 void impact("light");
                 void playReminderSound(item.id as SoundId);
-                if (enabled) void apply(true, minutes);
+                if (enabled) void apply(true, minutes, item.id as SoundId);
               }}
               className={`flex items-center justify-between rounded-xl border px-4 py-3 text-xs transition-transform active:scale-[0.98] ${
                 sound === item.id
