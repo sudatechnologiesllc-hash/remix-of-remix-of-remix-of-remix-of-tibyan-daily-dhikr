@@ -1,4 +1,4 @@
-import { BellRing, BellOff, Volume2, Settings } from "lucide-react";
+import { BellRing, BellOff, Volume2, Settings, Send } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AppFooter } from "@/components/AppFooter";
 import {
@@ -6,8 +6,10 @@ import {
   cancelAll,
   openNotificationSettings,
   schedule,
+  sendTestNotification,
   type IntervalMinutes,
 } from "@/services/notifications";
+
 import { impact } from "@/services/haptics";
 import { playReminderSound, unlockAudio, type SoundId } from "@/services/sound";
 import { ThemeToggle } from "@/components/ThemeToggle";
