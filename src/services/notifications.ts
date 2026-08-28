@@ -220,9 +220,9 @@ async function scheduleNative(
   options: ScheduleOptions,
 ): Promise<ScheduleResult> {
   log("Native detected");
-  let permission = await native.checkPermissions();
+  let permission = await withTimeout(native.checkPermissions(), "checkPermissions");
   if (permission.display !== "granted") {
-    permission = await native.requestPermissions();
+    permission = await withTimeout(native.requestPermissions(), "requestPermissions");
   }
   log("Permission:", permission.display);
   if (permission.display !== "granted") {
@@ -239,29 +239,35 @@ async function scheduleNative(
   const channel = CHANNELS[options.soundId];
   const stepMs = options.minutes * 60 * 1000;
   const start = Date.now() + stepMs;
-  const notifications = Array.from({ length: BATCH_SIZE }, (_, index) => ({
-    id: ID_BASE + index,
-    title: "تِبْيَان",
-    body: options.body,
-    channelId: channel.id,
-    sound: channel.sound,
-    smallIcon: "ic_stat_icon",
-    ongoing: false,
-    autoCancel: true,
-    schedule: {
-      at: new Date(start + index * stepMs),
-      allowWhileIdle: true,
-    },
-  }));
+  const build = (exact: boolean) =>
+    Array.from({ length: BATCH_SIZE }, (_, index) => ({
+      id: ID_BASE + index,
+      title: "تِبْيَان",
+      body: options.body,
+      channelId: channel.id,
+      sound: channel.sound,
+      smallIcon: "ic_stat_icon",
+      ongoing: false,
+      autoCancel: true,
+      schedule: {
+        at: new Date(start + index * stepMs),
+        ...(exact ? { allowWhileIdle: true } : {}),
+      },
+    }));
 
-  log("Scheduling", notifications.length, "notifications every", options.minutes, "min");
+  log("Scheduling", BATCH_SIZE, "notifications every", options.minutes, "min");
   try {
-    await native.schedule({ notifications });
+    await withTimeout(native.schedule({ notifications: build(true) }), "schedule", 15000);
   } catch (error) {
-    log("schedule failed", error);
-    const message = error instanceof Error ? error.message : String(error);
-    return { success: false, reason: `تعذّرت الجدولة: ${message}` };
+    log("exact schedule failed, retrying inexact", error);
+    try {
+      await withTimeout(native.schedule({ notifications: build(false) }), "schedule", 15000);
+    } catch (retryError) {
+      const message = retryError instanceof Error ? retryError.message : String(retryError);
+      return { success: false, reason: `تعذّرت الجدولة: ${message}` };
+    }
   }
+
 
   const firstAt = new Date(start);
   log("First notification at", firstAt.toISOString());
