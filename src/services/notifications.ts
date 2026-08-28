@@ -309,39 +309,44 @@ export async function sendTestNotification(
   if (!isBrowser()) return { success: false, reason: "غير متاح" };
   const native = await loadNative();
   if (native) {
-    let permission = await native.checkPermissions();
-    if (permission.display !== "granted") permission = await native.requestPermissions();
-    if (permission.display !== "granted") {
-      return {
-        success: false,
-        permissionDenied: true,
-        reason: "لم يُمنح تصريح الإشعارات. افتح إعدادات الإشعارات وفعّلها لتِبْيَان.",
-      };
-    }
-    await ensureChannel(native, soundId);
-    const channel = CHANNELS[soundId];
-    const at = new Date(Date.now() + 3000);
     try {
-      await native.schedule({
-        notifications: [
-          {
-            id: ID_BASE + 99999,
-            title: "تِبْيَان — إشعار اختبار",
-            body,
-            channelId: channel.id,
-            sound: channel.sound,
-            smallIcon: "ic_stat_icon",
-            autoCancel: true,
-            schedule: { at, allowWhileIdle: true },
-          },
-        ],
-      });
+      let permission = await withTimeout(native.checkPermissions(), "checkPermissions");
+      if (permission.display !== "granted") {
+        permission = await withTimeout(native.requestPermissions(), "requestPermissions");
+      }
+      if (permission.display !== "granted") {
+        return {
+          success: false,
+          permissionDenied: true,
+          reason: "لم يُمنح تصريح الإشعارات. افتح إعدادات الإشعارات وفعّلها لتِبْيَان.",
+        };
+      }
+      await ensureChannel(native, soundId);
+      const channel = CHANNELS[soundId];
+      // إشعار فوري بدون جدولة (لا يعتمد على المنبّهات الدقيقة) لتفادي أي تعليق
+      await withTimeout(
+        native.schedule({
+          notifications: [
+            {
+              id: ID_BASE + 99999,
+              title: "تِبْيَان — إشعار اختبار",
+              body,
+              channelId: channel.id,
+              sound: channel.sound,
+              smallIcon: "ic_stat_icon",
+              autoCancel: true,
+            },
+          ],
+        }),
+        "schedule(test)",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, reason: `تعذّر إرسال إشعار الاختبار: ${message}` };
     }
-    return { success: true, firstAt: at };
+    return { success: true, firstAt: new Date() };
   }
+
 
   // المتصفح
   await unlockAudio();
