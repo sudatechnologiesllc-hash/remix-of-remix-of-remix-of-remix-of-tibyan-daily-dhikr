@@ -34,20 +34,31 @@ export function ReminderSettings() {
     window.localStorage.setItem("tibyan_reminders_sound", sound);
   }, [enabled, minutes, sound]);
 
-  const apply = async (nextEnabled: boolean, nextMinutes: IntervalMinutes) => {
+  const apply = async (
+    nextEnabled: boolean,
+    nextMinutes: IntervalMinutes,
+    nextSound: SoundId = sound as SoundId,
+  ) => {
     void impact("light");
     await unlockAudio();
-    if (nextEnabled) {
-      await schedule({
-        minutes: nextMinutes,
-        body: "اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ",
-        sound: sound === "silent" ? undefined : `${sound}.mp3`,
-        soundId: sound as SoundId,
-      });
-    } else {
+    if (!nextEnabled) {
       await cancelAll();
+      setStatus(null);
+      return;
     }
+    const result = await schedule({
+      minutes: nextMinutes,
+      body: "اللَّهُمَّ صَلِّ وَسَلِّمْ عَلَى نَبِيِّنَا مُحَمَّدٍ",
+      soundId: nextSound,
+    });
+    if (!result.success) {
+      setEnabled(false);
+      setStatus(result.reason ?? "تعذّر تشغيل التذكير");
+      return;
+    }
+    setStatus(result.reason ?? null);
   };
+
 
   return (
     <div className="app-screen px-safe pb-app mx-auto max-w-lg pt-12">
