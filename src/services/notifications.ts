@@ -105,6 +105,8 @@ export interface ScheduleResult {
   firstAt?: Date;
   /** صحيح إذا كان الفشل بسبب رفض تصريح الإشعارات (لعرض زر فتح الإعدادات) */
   permissionDenied?: boolean;
+  /** صحيح إذا كان أندرويد يحتاج تفعيل «المنبّهات والتذكيرات» للجدولة الدقيقة */
+  exactAlarmDenied?: boolean;
 }
 
 /**
@@ -140,6 +142,19 @@ export async function openNotificationSettings(): Promise<boolean> {
     }
   }
   return false;
+}
+
+/** يفتح صفحة إذن «المنبّهات والتذكيرات» المطلوبة للجدولة الدقيقة على أندرويد 12+. */
+export async function openExactAlarmSettings(): Promise<boolean> {
+  const native = await loadNative();
+  if (!native) return false;
+  try {
+    await native.changeExactNotificationSetting();
+    return true;
+  } catch (error) {
+    log("failed to open exact alarm settings", error);
+    return false;
+  }
 }
 
 
@@ -233,6 +248,25 @@ async function scheduleNative(
     };
   }
 
+
+  try {
+    const exact = await withTimeout(
+      native.checkExactNotificationSetting(),
+      "checkExactNotificationSetting",
+    );
+    if (exact.exact_alarm !== "granted") {
+      return {
+        success: false,
+        exactAlarmDenied: true,
+        reason:
+          "يلزم السماح لتِبْيَان بالمنبّهات والتذكيرات كي تصل التنبيهات في موعدها والتطبيق مغلق.",
+      };
+    }
+  } catch (error) {
+    // الواجهة غير متاحة على iOS أو إصدارات أندرويد القديمة؛ نتابع الجدولة هناك.
+    log("exact alarm check unavailable", error);
+  }
+
   await ensureChannel(native, options.soundId);
   await cancelNative(native);
 
@@ -249,9 +283,13 @@ async function scheduleNative(
       smallIcon: "ic_stat_icon",
       ongoing: false,
       autoCancel: true,
+      // مهم: إزالة allowWhileIdle وحدها لا تجعل المنبّه غير دقيق في Capacitor 8.
+      // يجب تعطيل isExactNotification صراحةً في مسار الاسترداد.
+      isExactNotification: exact,
+      isExactMandatory: exact,
       schedule: {
         at: new Date(start + index * stepMs),
-        ...(exact ? { allowWhileIdle: true } : {}),
+        allowWhileIdle: true,
       },
     }));
 
@@ -268,11 +306,21 @@ async function scheduleNative(
     }
   }
 
-
   const firstAt = new Date(start);
+  const pending = await futurePendingCount(native);
+  if (pending === 0) {
+    return {
+      success: false,
+      reason: "لم يحفظ نظام أندرويد أي تنبيه مجدول. أعد منح أذونات الإشعارات والمنبّهات.",
+    };
+  }
   log("First notification at", firstAt.toISOString());
-  log("Pending notifications:", await futurePendingCount(native));
-  return { success: true, firstAt };
+  log("Pending notifications:", pending);
+  return {
+    success: true,
+    firstAt,
+    reason: `تمت جدولة ${pending} تنبيهًا. أول تنبيه في ${firstAt.toLocaleTimeString("ar")}.`,
+  };
 }
 
 export async function schedule(options: ScheduleOptions): Promise<ScheduleResult> {
