@@ -31,6 +31,24 @@ const log = (...args: unknown[]) => {
 
 const isBrowser = () => typeof window !== "undefined";
 
+/** يمنع تعليق الواجهة إن لم يُرجع المكوّن الأصلي أي نتيجة */
+function withTimeout<T>(promise: Promise<T>, label: string, ms = 8000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`انتهت مهلة ${label}`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+
 export function isNative(): boolean {
   if (!isBrowser()) return false;
   const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
@@ -202,9 +220,9 @@ async function scheduleNative(
   options: ScheduleOptions,
 ): Promise<ScheduleResult> {
   log("Native detected");
-  let permission = await native.checkPermissions();
+  let permission = await withTimeout(native.checkPermissions(), "checkPermissions");
   if (permission.display !== "granted") {
-    permission = await native.requestPermissions();
+    permission = await withTimeout(native.requestPermissions(), "requestPermissions");
   }
   log("Permission:", permission.display);
   if (permission.display !== "granted") {
@@ -221,29 +239,35 @@ async function scheduleNative(
   const channel = CHANNELS[options.soundId];
   const stepMs = options.minutes * 60 * 1000;
   const start = Date.now() + stepMs;
-  const notifications = Array.from({ length: BATCH_SIZE }, (_, index) => ({
-    id: ID_BASE + index,
-    title: "تِبْيَان",
-    body: options.body,
-    channelId: channel.id,
-    sound: channel.sound,
-    smallIcon: "ic_stat_icon",
-    ongoing: false,
-    autoCancel: true,
-    schedule: {
-      at: new Date(start + index * stepMs),
-      allowWhileIdle: true,
-    },
-  }));
+  const build = (exact: boolean) =>
+    Array.from({ length: BATCH_SIZE }, (_, index) => ({
+      id: ID_BASE + index,
+      title: "تِبْيَان",
+      body: options.body,
+      channelId: channel.id,
+      sound: channel.sound,
+      smallIcon: "ic_stat_icon",
+      ongoing: false,
+      autoCancel: true,
+      schedule: {
+        at: new Date(start + index * stepMs),
+        ...(exact ? { allowWhileIdle: true } : {}),
+      },
+    }));
 
-  log("Scheduling", notifications.length, "notifications every", options.minutes, "min");
+  log("Scheduling", BATCH_SIZE, "notifications every", options.minutes, "min");
   try {
-    await native.schedule({ notifications });
+    await withTimeout(native.schedule({ notifications: build(true) }), "schedule", 15000);
   } catch (error) {
-    log("schedule failed", error);
-    const message = error instanceof Error ? error.message : String(error);
-    return { success: false, reason: `تعذّرت الجدولة: ${message}` };
+    log("exact schedule failed, retrying inexact", error);
+    try {
+      await withTimeout(native.schedule({ notifications: build(false) }), "schedule", 15000);
+    } catch (retryError) {
+      const message = retryError instanceof Error ? retryError.message : String(retryError);
+      return { success: false, reason: `تعذّرت الجدولة: ${message}` };
+    }
   }
+
 
   const firstAt = new Date(start);
   log("First notification at", firstAt.toISOString());
@@ -309,39 +333,44 @@ export async function sendTestNotification(
   if (!isBrowser()) return { success: false, reason: "غير متاح" };
   const native = await loadNative();
   if (native) {
-    let permission = await native.checkPermissions();
-    if (permission.display !== "granted") permission = await native.requestPermissions();
-    if (permission.display !== "granted") {
-      return {
-        success: false,
-        permissionDenied: true,
-        reason: "لم يُمنح تصريح الإشعارات. افتح إعدادات الإشعارات وفعّلها لتِبْيَان.",
-      };
-    }
-    await ensureChannel(native, soundId);
-    const channel = CHANNELS[soundId];
-    const at = new Date(Date.now() + 3000);
     try {
-      await native.schedule({
-        notifications: [
-          {
-            id: ID_BASE + 99999,
-            title: "تِبْيَان — إشعار اختبار",
-            body,
-            channelId: channel.id,
-            sound: channel.sound,
-            smallIcon: "ic_stat_icon",
-            autoCancel: true,
-            schedule: { at, allowWhileIdle: true },
-          },
-        ],
-      });
+      let permission = await withTimeout(native.checkPermissions(), "checkPermissions");
+      if (permission.display !== "granted") {
+        permission = await withTimeout(native.requestPermissions(), "requestPermissions");
+      }
+      if (permission.display !== "granted") {
+        return {
+          success: false,
+          permissionDenied: true,
+          reason: "لم يُمنح تصريح الإشعارات. افتح إعدادات الإشعارات وفعّلها لتِبْيَان.",
+        };
+      }
+      await ensureChannel(native, soundId);
+      const channel = CHANNELS[soundId];
+      // إشعار فوري بدون جدولة (لا يعتمد على المنبّهات الدقيقة) لتفادي أي تعليق
+      await withTimeout(
+        native.schedule({
+          notifications: [
+            {
+              id: ID_BASE + 99999,
+              title: "تِبْيَان — إشعار اختبار",
+              body,
+              channelId: channel.id,
+              sound: channel.sound,
+              smallIcon: "ic_stat_icon",
+              autoCancel: true,
+            },
+          ],
+        }),
+        "schedule(test)",
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, reason: `تعذّر إرسال إشعار الاختبار: ${message}` };
     }
-    return { success: true, firstAt: at };
+    return { success: true, firstAt: new Date() };
   }
+
 
   // المتصفح
   await unlockAudio();
