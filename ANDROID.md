@@ -94,7 +94,7 @@ adb install -r android/app/build/outputs/apk/debug/app-debug.apk
 - `android/app/src/main/res/raw/`: `salawat.mp3`, `chime.mp3`, `silence.mp3` (أصوات القنوات).
 - `android/app/src/main/res/drawable/ic_stat_icon.xml`: أيقونة شريط الإشعارات.
 - صلاحيات `AndroidManifest.xml`: `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`,
-  `USE_EXACT_ALARM`, `RECEIVE_BOOT_COMPLETED`, `VIBRATE`.
+  `RECEIVE_BOOT_COMPLETED`, `VIBRATE`.
 - `android/capacitor-cordova-android-plugins/` و`assets/public` مُستثناة من Git
   ويعيد `npx cap sync android` توليدها — لذا نفّذ الخطوة 3 قبل Gradle دائماً.
 
