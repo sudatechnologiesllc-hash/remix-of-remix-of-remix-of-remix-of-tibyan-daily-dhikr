@@ -156,7 +156,28 @@ export function ReminderSettings() {
           </button>
         )}
 
+        <button
+          type="button"
+          onClick={async () => {
+            void impact("light");
+            await unlockAudio();
+            setStatus("جارٍ إرسال إشعار الاختبار…");
+            const result = await sendTestNotification(sound as SoundId);
+            if (!result.success) {
+              setStatus(result.reason ?? "تعذّر إرسال إشعار الاختبار");
+              setNeedsPermission(Boolean(result.permissionDenied));
+              return;
+            }
+            setNeedsPermission(false);
+            setStatus(result.reason ?? "تم إرسال إشعار الاختبار — سيظهر بعد ثوانٍ مع الصوت.");
+          }}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-tibyan-gold/60 px-4 py-2.5 text-xs font-semibold text-tibyan-gold transition-transform active:scale-95"
+        >
+          <Send className="h-3.5 w-3.5" />
+          إرسال إشعار اختبار الآن
+        </button>
       </section>
+
 
       <section className="mb-4 rounded-2xl border border-tibyan-border-light bg-tibyan-surface-light p-5 shadow-tactile dark:border-tibyan-border-dark dark:bg-tibyan-surface-dark dark:shadow-tactile-dark">
         <p className="mb-4 text-xs font-semibold text-tibyan-subtle-light dark:text-tibyan-subtle-dark">
