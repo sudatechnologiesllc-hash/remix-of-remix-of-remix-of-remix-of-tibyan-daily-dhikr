@@ -460,11 +460,14 @@ export function initBackgroundReminders(): () => void {
         log("rearm skipped — permission:", permission.display);
         return;
       }
-      const remaining = await futurePendingCount(native);
-      log("Pending notifications:", remaining);
-      if (remaining >= REFILL_THRESHOLD) return;
-      log("Refilling batch…");
+      const pending = await native.getPending();
+      const ours = pending.notifications.filter((n) => n.id >= ID_BASE);
+      const hasRepeating = ours.some((n) => n.id === REPEATING_ID);
+      log("Pending notifications:", ours.length, "repeating:", hasRepeating);
+      if (hasRepeating && ours.length >= REFILL_THRESHOLD) return;
+      log("Refilling native schedule…");
       await scheduleNative(native, state);
+
     } catch (error) {
       log("rearm failed", error);
     }
