@@ -239,41 +239,81 @@ async function scheduleNative(
   const channel = CHANNELS[options.soundId];
   const stepMs = options.minutes * 60 * 1000;
   const start = Date.now() + stepMs;
-  const build = (exact: boolean) =>
+
+  const base = {
+    title: "تِبْيَان",
+    body: options.body,
+    channelId: channel.id,
+    sound: channel.sound,
+    smallIcon: "ic_stat_icon",
+    ongoing: false,
+    autoCancel: true,
+  };
+
+  /**
+   * التنبيه الأساسي: منبّه متكرّر في نظام أندرويد (AlarmManager) عبر `repeats`،
+   * فيستمر إلى ما لا نهاية حتى لو لم يُفتح التطبيق لأيام، ويُستعاد بعد إعادة تشغيل الجهاز
+   * عبر مستقبل الإقلاع في المكوّن الأصلي (RECEIVE_BOOT_COMPLETED).
+   */
+  const buildRepeating = (exact: boolean) => [
+    {
+      ...base,
+      id: REPEATING_ID,
+      schedule: {
+        at: new Date(start),
+        every: "minute" as const,
+        count: options.minutes,
+        repeats: true,
+        ...(exact ? { allowWhileIdle: true } : {}),
+      },
+    },
+  ];
+
+  /** دفعة منبّهات مفردة دقيقة كطبقة احتياطية تضمن الدقة أثناء وضع Doze */
+  const buildBatch = (exact: boolean) =>
     Array.from({ length: BATCH_SIZE }, (_, index) => ({
-      id: ID_BASE + index,
-      title: "تِبْيَان",
-      body: options.body,
-      channelId: channel.id,
-      sound: channel.sound,
-      smallIcon: "ic_stat_icon",
-      ongoing: false,
-      autoCancel: true,
+      ...base,
+      id: ID_BASE + 1 + index,
       schedule: {
         at: new Date(start + index * stepMs),
         ...(exact ? { allowWhileIdle: true } : {}),
       },
     }));
 
-  log("Scheduling", BATCH_SIZE, "notifications every", options.minutes, "min");
-  try {
-    await withTimeout(native.schedule({ notifications: build(true) }), "schedule", 15000);
-  } catch (error) {
-    log("exact schedule failed, retrying inexact", error);
+  const trySchedule = async (
+    notifications: ReturnType<typeof buildBatch>,
+    label: string,
+  ): Promise<boolean> => {
     try {
-      await withTimeout(native.schedule({ notifications: build(false) }), "schedule", 15000);
-    } catch (retryError) {
-      const message = retryError instanceof Error ? retryError.message : String(retryError);
-      return { success: false, reason: `تعذّرت الجدولة: ${message}` };
+      await withTimeout(native.schedule({ notifications }), label, 15000);
+      return true;
+    } catch (error) {
+      log(label, "failed", error);
+      return false;
     }
-  }
+  };
 
+  log("Scheduling native repeating alarm every", options.minutes, "min + backup batch");
+  let ok = await trySchedule(buildRepeating(true), "schedule(repeating,exact)");
+  if (!ok) ok = await trySchedule(buildRepeating(false), "schedule(repeating,inexact)");
+
+  let batchOk = await trySchedule(buildBatch(true), "schedule(batch,exact)");
+  if (!batchOk) batchOk = await trySchedule(buildBatch(false), "schedule(batch,inexact)");
+
+  if (!ok && !batchOk) {
+    return { success: false, reason: "تعذّرت جدولة التنبيهات في نظام الهاتف" };
+  }
 
   const firstAt = new Date(start);
   log("First notification at", firstAt.toISOString());
   log("Pending notifications:", await futurePendingCount(native));
-  return { success: true, firstAt };
+  return {
+    success: true,
+    firstAt,
+    ...(ok ? {} : { reason: "التذكير مجدول احتياطياً فقط — أعد فتح التطبيق أحياناً" }),
+  };
 }
+
 
 export async function schedule(options: ScheduleOptions): Promise<ScheduleResult> {
   if (!isBrowser()) return { success: false, reason: "غير متاح" };
