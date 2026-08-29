@@ -20,9 +20,12 @@ const CHANNELS: Record<SoundId, { id: string; sound: string; name: string }> = {
 
 /** نطاق معرّفات خاص بتِبْيَان لا يتصادم مع غيره */
 const ID_BASE = 71000;
+/** معرّف المنبّه المتكرّر الدائم (AlarmManager repeating) */
+const REPEATING_ID = ID_BASE;
 const BATCH_SIZE = 60;
 /** إذا نقص عدد التنبيهات المستقبلية عن هذا الحد يُعاد ملء الدفعة */
 const REFILL_THRESHOLD = 12;
+
 
 const DEBUG = true;
 const log = (...args: unknown[]) => {
